@@ -94,7 +94,7 @@
 
     label, legend { font-weight: 650; }
 
-    input[type="text"], input[type="tel"], input[type="email"], input[type="search"], textarea {
+    input[type="text"], input[type="tel"], input[type="email"], input[type="search"], textarea, select {
       width: 100%;
       min-height: 3rem;
       margin-top: .35rem;
@@ -172,6 +172,25 @@
     .check-row input { width: 1.75rem; height: 1.75rem; flex: 0 0 auto; }
     .check-row label { display: flex; align-items: center; min-height: 3rem; flex: 1; }
 
+    .selection-panel { margin: 1rem 0; }
+    .selection-panel p { margin-top: 0; }
+    .selection-card .check-row { align-items: flex-start; }
+    .selection-card .check-row label { display: block; padding: .55rem 0; }
+
+    .mapping-list, .duplicate-list, .preview-list {
+      display: grid;
+      gap: .75rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .mapping-item label { display: block; overflow-wrap: anywhere; }
+    .csv-summary { margin: 1rem 0; }
+    .csv-summary ul { margin-bottom: 0; }
+    .merge-preview { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .merge-preview h4 { margin: 0 0 .6rem; font-size: 1rem; }
+
     .repeat-row {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -244,8 +263,7 @@
     <h2 id="menuTitle">Hlavní menu</h2>
     <nav class="dialog-actions" aria-label="Položky hlavního menu">
       <button type="button" data-view="groups">Správa skupin</button>
-      <button type="button" data-view="transfer">Import</button>
-      <button type="button" data-view="transfer">Export a zálohy</button>
+      <button type="button" data-view="transfer">Import, export a zálohy</button>
       <button type="button" data-view="trash">Koš</button>
       <button type="button" data-view="help">Návod</button>
       <button id="closeMenuButton" class="quiet-button" type="button">Zavřít menu</button>
@@ -280,10 +298,26 @@
     </form>
   </dialog>
 
+  <dialog id="bulkGroupDialog" aria-labelledby="bulkGroupTitle" aria-describedby="bulkGroupMessage">
+    <form id="bulkGroupForm" method="dialog" class="stack">
+      <h2 id="bulkGroupTitle">Vybrat skupiny</h2>
+      <p id="bulkGroupMessage"></p>
+      <fieldset id="bulkGroupChoices">
+        <legend>Uživatelské skupiny</legend>
+      </fieldset>
+      <p id="bulkGroupError" class="danger" role="alert"></p>
+      <div class="row">
+        <button id="bulkGroupConfirm" class="primary" type="submit" value="save">Potvrdit</button>
+        <button type="submit" value="cancel">Zrušit</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="status" class="status hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <input id="jsonFileInput" class="hidden" type="file" accept="application/json,.json">
   <input id="vcfFileInput" class="hidden" type="file" accept="text/vcard,text/x-vcard,.vcf">
+  <input id="csvFileInput" class="hidden" type="file" accept="text/csv,.csv">
 
   <script>
   (() => {
@@ -303,6 +337,7 @@
     const statusBox = document.getElementById('status');
     const jsonFileInput = document.getElementById('jsonFileInput');
     const vcfFileInput = document.getElementById('vcfFileInput');
+    const csvFileInput = document.getElementById('csvFileInput');
 
     let database;
     let statusTimer;
@@ -316,7 +351,13 @@
       formDirty: false,
       formReturn: { view: 'home' },
       detailReturn: { view: 'home' },
-      pendingJsonMode: 'merge'
+      pendingJsonMode: 'merge',
+      selectionMode: false,
+      selectionContext: null,
+      selectedIds: new Set(),
+      globalQuery: '',
+      groupQuery: '',
+      csv: null
     };
 
     function makeId(prefix) {
@@ -353,6 +394,17 @@
     const getAll = storeName => storeRequest(storeName, 'readonly', store => store.getAll());
     const putOne = (storeName, value) => storeRequest(storeName, 'readwrite', store => store.put(value));
     const deleteOne = (storeName, key) => storeRequest(storeName, 'readwrite', store => store.delete(key));
+
+    function putContacts(contacts) {
+      return new Promise((resolve, reject) => {
+        const tx = database.transaction('contacts', 'readwrite');
+        const store = tx.objectStore('contacts');
+        contacts.forEach(contact => store.put(contact));
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error('Hromadné uložení kontaktů se nezdařilo.'));
+        tx.onabort = () => reject(tx.error || new Error('Hromadné uložení kontaktů bylo přerušeno.'));
+      });
+    }
 
     function replaceDatabase(groups, contacts) {
       return new Promise((resolve, reject) => {
@@ -458,6 +510,43 @@
       const contacts = activeContacts();
       if (id === 'all') return contacts;
       return contacts.filter(contact => (contact.groupIds || []).includes(id));
+    }
+
+    function selectionContextFor(view = state.view, groupId = state.groupId) {
+      if (view === 'home') return 'global';
+      if (view === 'group') return 'group:' + (groupId || 'all');
+      return null;
+    }
+
+    function selectionIsActive(context) {
+      return state.selectionMode && state.selectionContext === context;
+    }
+
+    function resetSelection() {
+      state.selectionMode = false;
+      state.selectionContext = null;
+      state.selectedIds.clear();
+    }
+
+    function startSelection(context) {
+      state.selectionMode = true;
+      state.selectionContext = context;
+      state.selectedIds.clear();
+      render();
+      requestAnimationFrame(() => {
+        const target = app.querySelector('[data-select-contact]') || app.querySelector('[data-exit-selection]');
+        if (target) target.focus();
+      });
+    }
+
+    function exitSelection() {
+      resetSelection();
+      render();
+      requestAnimationFrame(() => {
+        const target = app.querySelector('[data-start-selection]');
+        if (target) target.focus();
+        else focusMain();
+      });
     }
 
     function announce(message, kind = 'normal') {
@@ -594,6 +683,11 @@
         if (!leave) return;
         state.formDirty = false;
       }
+      const nextGroupId = 'groupId' in options ? options.groupId : state.groupId;
+      const nextContext = selectionContextFor(view, nextGroupId);
+      if (state.selectionMode && nextContext !== state.selectionContext) resetSelection();
+      if (view === 'group' && nextGroupId !== state.groupId) state.groupQuery = '';
+      if (view === 'home' && state.view !== 'home') state.globalQuery = '';
       state.view = view;
       if ('groupId' in options) state.groupId = options.groupId;
       if ('detailId' in options) state.detailId = options.detailId;
@@ -604,13 +698,14 @@
 
     function render() {
       app.replaceChildren();
-      addContactButton.classList.toggle('hidden', !['home', 'group'].includes(state.view));
+      addContactButton.classList.toggle('hidden', !['home', 'group'].includes(state.view) || state.selectionMode);
       if (state.view === 'home') renderHome();
       else if (state.view === 'group') renderGroup();
       else if (state.view === 'form') renderForm();
       else if (state.view === 'detail') renderDetail();
       else if (state.view === 'groups') renderGroupManager();
       else if (state.view === 'transfer') renderTransfer();
+      else if (state.view === 'csv') renderCsvImport();
       else if (state.view === 'trash') renderTrash();
       else if (state.view === 'help') renderHelp();
       else renderHome();
@@ -623,19 +718,25 @@
         el('label', { for: 'globalSearch', text: 'Jméno, telefon, e-mail, poznámka nebo skupina' })
       );
       const search = el('input', { id: 'globalSearch', type: 'search', inputmode: 'search', autocomplete: 'off', placeholder: 'Začněte psát…' });
+      search.value = state.globalQuery;
       const resultHeading = el('h3', { id: 'searchResultHeading', className: 'hidden', text: 'Výsledky hledání' });
       const resultStatus = el('p', { className: 'muted', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+      const selectionPanel = el('div');
       const results = el('div');
-      search.addEventListener('input', () => {
+      const update = () => {
         const query = search.value;
+        state.globalQuery = query;
         results.replaceChildren();
+        selectionPanel.replaceChildren();
         resultHeading.classList.toggle('hidden', !query.trim());
-        if (!query.trim()) { resultStatus.textContent = ''; return; }
-        const matches = sortContacts(activeContacts().filter(contact => contactMatches(contact, query)));
-        resultStatus.textContent = contactCountMessage(matches.length);
-        results.append(renderContactList(matches, 'Hledání neodpovídá žádný kontakt.'));
-      });
-      searchSection.append(search, resultHeading, resultStatus, results);
+        const matches = query.trim() ? sortContacts(activeContacts().filter(contact => contactMatches(contact, query))) : [];
+        resultStatus.textContent = query.trim() ? contactCountMessage(matches.length) : '';
+        const active = selectionIsActive('global');
+        if (query.trim() || active) selectionPanel.append(renderSelectionControls(matches, 'global'));
+        if (query.trim()) results.append(renderContactList(matches, 'Hledání neodpovídá žádný kontakt.', active ? { context: 'global' } : null));
+      };
+      search.addEventListener('input', update);
+      searchSection.append(search, resultHeading, resultStatus, selectionPanel, results);
 
       const groupsSection = el('section', { 'aria-labelledby': 'groupsHeading' }, el('h2', { id: 'groupsHeading', text: 'Skupiny' }));
       if (!activeContacts().length) groupsSection.append(el('p', { className: 'muted', text: 'Zatím tu nejsou žádné kontakty. Přidejte první kontakt tlačítkem Přidat kontakt.' }));
@@ -645,6 +746,7 @@
       state.groups.forEach(group => list.append(groupListItem(group.id, group.name, groupContacts(group.id).length)));
       groupsSection.append(list);
       app.append(searchSection, groupsSection);
+      update();
     }
 
     function groupListItem(id, name, count) {
@@ -666,11 +768,83 @@
       return el('li', null, control);
     }
 
-    function renderContactList(contacts, emptyMessage) {
+    function renderContactList(contacts, emptyMessage, selectionOptions = null) {
       if (!contacts.length) return el('p', { className: 'muted', text: emptyMessage });
       const list = el('ul', { className: 'card-list' });
-      contacts.forEach(contact => list.append(contactCard(contact)));
+      contacts.forEach((contact, index) => list.append(selectionOptions ? selectionContactCard(contact, index) : contactCard(contact)));
       return list;
+    }
+
+    function selectionContactCard(contact, index) {
+      const inputId = 'select-contact-' + index;
+      const labelId = inputId + '-label';
+      const checkbox = el('input', {
+        id: inputId,
+        type: 'checkbox',
+        checked: state.selectedIds.has(contact.id),
+        'data-select-contact': contact.id,
+        'aria-labelledby': labelId
+      });
+      const label = el('label', { id: labelId, for: inputId });
+      label.append(el('span', { className: 'card-title', text: displayName(contact) }));
+      const bits = [];
+      if (contact.phones && contact.phones[0] && displayName(contact) !== contact.phones[0]) bits.push(contact.phones[0]);
+      if (contact.emails && contact.emails[0] && displayName(contact) !== contact.emails[0]) bits.push(contact.emails[0]);
+      if (bits.length) label.append(el('span', { className: 'card-meta', text: bits.join(' · ') }));
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) state.selectedIds.add(contact.id);
+        else state.selectedIds.delete(contact.id);
+        updateSelectionIndicators();
+      });
+      return el('li', { className: 'card selection-card' }, el('div', { className: 'check-row' }, checkbox, label));
+    }
+
+    function selectedCountText() {
+      const count = state.selectedIds.size;
+      if (count === 1) return 'Vybráno: 1 kontakt';
+      if (count >= 2 && count <= 4) return 'Vybráno: ' + count + ' kontakty';
+      return 'Vybráno: ' + count + ' kontaktů';
+    }
+
+    function updateSelectionIndicators() {
+      const status = app.querySelector('[data-selection-count]');
+      if (status) status.textContent = selectedCountText();
+      app.querySelectorAll('[data-needs-selection]').forEach(control => { control.disabled = state.selectedIds.size === 0; });
+    }
+
+    function renderSelectionControls(displayedContacts, context) {
+      if (!selectionIsActive(context)) {
+        const start = button('Vybrat kontakty', () => startSelection(context));
+        start.disabled = displayedContacts.length === 0;
+        start.setAttribute('data-start-selection', '');
+        return el('div', { className: 'selection-panel' }, start);
+      }
+
+      const count = el('p', { 'data-selection-count': '', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true', text: selectedCountText() });
+      const selectAll = button('Vybrat vše', () => {
+        displayedContacts.forEach(contact => state.selectedIds.add(contact.id));
+        app.querySelectorAll('[data-select-contact]').forEach(control => { control.checked = true; });
+        updateSelectionIndicators();
+      });
+      selectAll.setAttribute('aria-label', 'Vybrat všechny zobrazené kontakty');
+      selectAll.disabled = displayedContacts.length === 0;
+      const clear = button('Zrušit výběr', () => {
+        state.selectedIds.clear();
+        app.querySelectorAll('[data-select-contact]').forEach(control => { control.checked = false; });
+        updateSelectionIndicators();
+      });
+      const add = button('Přidat do skupiny', () => bulkChangeGroups('add'));
+      const remove = button('Odebrat ze skupiny', () => bulkChangeGroups('remove'));
+      const trash = button('Přesunout do Koše', bulkMoveToTrash, 'danger-button');
+      [add, remove, trash].forEach(control => control.setAttribute('data-needs-selection', ''));
+      const exit = button('Ukončit režim výběru', exitSelection, 'quiet-button');
+      exit.setAttribute('data-exit-selection', '');
+      const panel = el('section', { className: 'card selection-panel', 'aria-label': 'Hromadné operace s kontakty' },
+        count,
+        el('div', { className: 'row' }, selectAll, clear, add, remove, trash, exit)
+      );
+      requestAnimationFrame(updateSelectionIndicators);
+      return panel;
     }
 
     function contactCountMessage(count) {
@@ -691,20 +865,27 @@
       const searchWrap = el('div', { className: 'search-box stack' });
       const label = el('label', { for: 'groupSearch', text: 'Hledat v této skupině' });
       const search = el('input', { id: 'groupSearch', type: 'search', inputmode: 'search', autocomplete: 'off', placeholder: 'Jméno, telefon, e-mail…' });
+      search.value = state.groupQuery;
       const resultStatus = el('p', { className: 'muted', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+      const selectionPanel = el('div');
       const results = el('div');
       const update = () => {
+        state.groupQuery = search.value;
         const matches = sortContacts(groupContacts(id).filter(contact => contactMatches(contact, search.value)));
         resultStatus.textContent = search.value.trim() ? contactCountMessage(matches.length) : '';
-        results.replaceChildren(renderContactList(matches, search.value.trim() ? 'Hledání neodpovídá žádný kontakt.' : 'V této skupině zatím nejsou žádné kontakty.'));
+        const context = 'group:' + id;
+        const active = selectionIsActive(context);
+        selectionPanel.replaceChildren(renderSelectionControls(matches, context));
+        results.replaceChildren(renderContactList(matches, search.value.trim() ? 'Hledání neodpovídá žádný kontakt.' : 'V této skupině zatím nejsou žádné kontakty.', active ? { context } : null));
       };
       search.addEventListener('input', update);
-      searchWrap.append(label, search, resultStatus, results);
+      searchWrap.append(label, search, resultStatus, selectionPanel, results);
       app.append(searchWrap);
       update();
     }
 
     function openNewContact() {
+      resetSelection();
       const preselected = state.view === 'group' && state.groupId !== 'all' && state.groupId !== IMPORTED_ID ? [state.groupId] : [];
       state.formReturn = state.view === 'group' ? { view: 'group', groupId: state.groupId } : { view: 'home' };
       state.editId = null;
@@ -917,6 +1098,120 @@
       announce('Kontakt byl přesunut do Koše.', 'success');
     }
 
+    function selectedActiveContacts() {
+      return activeContacts().filter(contact => state.selectedIds.has(contact.id));
+    }
+
+    async function chooseBulkGroups(mode, contacts) {
+      const dialog = document.getElementById('bulkGroupDialog');
+      const form = document.getElementById('bulkGroupForm');
+      const choices = document.getElementById('bulkGroupChoices');
+      const error = document.getElementById('bulkGroupError');
+      const confirm = document.getElementById('bulkGroupConfirm');
+      const opener = document.activeElement;
+      const groups = mode === 'remove'
+        ? state.groups.filter(group => contacts.some(contact => (contact.groupIds || []).includes(group.id)))
+        : state.groups;
+      document.getElementById('bulkGroupTitle').textContent = mode === 'add' ? 'Přidat kontakty do skupin' : 'Odebrat kontakty ze skupin';
+      document.getElementById('bulkGroupMessage').textContent = mode === 'add'
+        ? 'Vyberte jednu nebo více skupin, do kterých se mají kontakty přidat.'
+        : 'Vyberte jednu nebo více skupin, ze kterých se mají kontakty odebrat.';
+      confirm.textContent = mode === 'add' ? 'Přidat do vybraných skupin' : 'Odebrat z vybraných skupin';
+      confirm.disabled = groups.length === 0;
+      choices.replaceChildren(el('legend', { text: 'Uživatelské skupiny' }));
+      error.textContent = '';
+      if (!groups.length) {
+        choices.append(el('p', { className: 'muted', text: mode === 'add' ? 'Nejsou vytvořené žádné uživatelské skupiny.' : 'Vybrané kontakty nejsou v žádné uživatelské skupině.' }));
+      } else {
+        groups.forEach((group, index) => {
+          const inputId = 'bulk-group-' + index;
+          const labelId = inputId + '-label';
+          const checkbox = el('input', { id: inputId, type: 'checkbox', value: group.id, 'aria-labelledby': labelId });
+          checkbox.addEventListener('change', () => { error.textContent = ''; });
+          choices.append(el('div', { className: 'check-row' }, checkbox, el('label', { id: labelId, for: inputId, text: group.name })));
+        });
+      }
+
+      return new Promise(resolve => {
+        let settled = false;
+        const finish = value => {
+          if (settled) return;
+          settled = true;
+          form.removeEventListener('submit', onSubmit);
+          dialog.removeEventListener('cancel', onCancel);
+          if (dialog.open) dialog.close();
+          restoreDialogFocus(opener);
+          resolve(value);
+        };
+        const onSubmit = event => {
+          event.preventDefault();
+          if (event.submitter && event.submitter.value === 'cancel') return finish(null);
+          const selected = [...choices.querySelectorAll('input:checked')].map(input => input.value);
+          if (!selected.length) {
+            error.textContent = 'Vyberte alespoň jednu skupinu.';
+            const first = choices.querySelector('input');
+            if (first) first.focus();
+            return;
+          }
+          finish(selected);
+        };
+        const onCancel = event => { event.preventDefault(); finish(null); };
+        form.addEventListener('submit', onSubmit);
+        dialog.addEventListener('cancel', onCancel);
+        dialog.showModal();
+        const first = choices.querySelector('input');
+        (first || form.querySelector('button[value="cancel"]')).focus();
+      });
+    }
+
+    async function bulkChangeGroups(mode) {
+      const contacts = selectedActiveContacts();
+      if (!contacts.length) return;
+      const groupIds = await chooseBulkGroups(mode, contacts);
+      if (!groupIds) return;
+      const now = new Date().toISOString();
+      const changed = [];
+      for (const contact of contacts) {
+        const before = [...(contact.groupIds || [])];
+        let after;
+        if (mode === 'add') {
+          after = [...new Set([...before, ...groupIds])];
+          if (groupIds.length) after = after.filter(id => id !== IMPORTED_ID);
+        } else {
+          const removed = new Set(groupIds);
+          after = before.filter(id => !removed.has(id));
+        }
+        if (before.length !== after.length || before.some((id, index) => id !== after[index])) {
+          changed.push({ ...contact, groupIds: after, updatedAt: now });
+        }
+      }
+      if (changed.length) await putContacts(changed);
+      await reloadData();
+      if (state.groupId === IMPORTED_ID && !hasImportedContacts()) {
+        resetSelection();
+        state.view = 'home';
+      }
+      render();
+      focusMain();
+      const verb = mode === 'add' ? 'přidáno do vybraných skupin' : 'odebráno z vybraných skupin';
+      announce(changed.length ? changed.length + ' kontaktů bylo ' + verb + '.' : 'Vybrané kontakty už odpovídají požadovanému členství.', 'success');
+    }
+
+    async function bulkMoveToTrash() {
+      const contacts = selectedActiveContacts();
+      if (!contacts.length) return;
+      const approved = await confirmAction('Přesunout kontakty do Koše?', 'Přesunout ' + contacts.length + ' kontaktů do Koše? Kontakty zůstanou obnovitelné.', 'Přesunout do Koše', true);
+      if (!approved) return;
+      const now = new Date().toISOString();
+      await putContacts(contacts.map(contact => ({ ...contact, deletedAt: now, updatedAt: now })));
+      await reloadData();
+      resetSelection();
+      if (state.groupId === IMPORTED_ID && !hasImportedContacts()) state.view = 'home';
+      render();
+      focusMain();
+      announce(contacts.length + ' kontaktů bylo přesunuto do Koše.', 'success');
+    }
+
     function renderGroupManager() {
       app.append(backButton(), heading('Správa skupin'));
       const intro = el('p', { className: 'muted', text: 'Skupiny „Všechny kontakty“ a „Importované“ spravuje aplikace automaticky.' });
@@ -975,28 +1270,504 @@
     function renderTransfer() {
       app.append(backButton(), heading('Import, export a zálohy'));
       const warning = el('p', { className: 'warning', text: 'JSON je jediná úplná záloha aplikace. Ukládejte ji pravidelně mimo prohlížeč.' });
-      const exportCard = el('section', { className: 'card' },
-        el('h3', { text: 'Export' }),
-        el('p', { text: 'JSON zachová kontakty, skupiny, vazby i Koš. VCF přenese pouze běžné údaje aktivních kontaktů.' }),
-        el('div', { className: 'row' },
-          button('Stáhnout úplnou JSON zálohu', exportJson, 'primary'),
-          button('Stáhnout kontakty jako VCF', exportVcf)
-        )
-      );
-      const jsonCard = el('section', { className: 'card' },
-        el('h3', { text: 'Import JSON zálohy' }),
-        el('p', { text: 'Sloučení ponechá současná data. Obnova po potvrzení současnou databázi nahradí.' }),
-        el('div', { className: 'row' },
+      const importCard = el('section', { className: 'card' },
+        el('h3', { text: 'Import' }),
+        el('p', { text: 'VCF a CSV přidají kontakty do skupiny „Importované“. JSON lze sloučit se současnými daty nebo použít k úplné obnově.' }),
+        el('div', { className: 'compact-stack' },
+          button('Importovat VCF / vCard', () => { vcfFileInput.value = ''; vcfFileInput.click(); }),
+          button('Importovat CSV', () => { csvFileInput.value = ''; csvFileInput.click(); }),
           button('Sloučit JSON se současnými daty', () => selectJson('merge')),
           button('Obnovit databázi z JSON', () => selectJson('restore'), 'danger-button')
         )
       );
-      const vcfCard = el('section', { className: 'card' },
-        el('h3', { text: 'Import VCF / vCard' }),
-        el('p', { text: 'Nové kontakty se zařadí do skupiny „Importované“. Případné shody podle telefonu nebo e-mailu vždy posoudíte ručně.' }),
-        button('Vybrat soubor VCF', () => { vcfFileInput.value = ''; vcfFileInput.click(); })
+      const exportCard = el('section', { className: 'card' },
+        el('h3', { text: 'Export a záloha' }),
+        el('p', { text: 'JSON zachová kontakty, skupiny, vazby i Koš. VCF přenese pouze běžné údaje aktivních kontaktů.' }),
+        el('div', { className: 'compact-stack' },
+          button('Stáhnout úplnou JSON zálohu', exportJson, 'primary'),
+          button('Stáhnout kontakty jako VCF', exportVcf)
+        )
       );
-      app.append(warning, el('div', { className: 'stack' }, exportCard, jsonCard, vcfCard));
+      app.append(warning, el('div', { className: 'stack' }, importCard, exportCard));
+    }
+
+    function parseCsv(text, delimiter) {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let quoted = false;
+      for (let index = 0; index < text.length; index++) {
+        const character = text[index];
+        if (quoted) {
+          if (character === '"') {
+            if (text[index + 1] === '"') { field += '"'; index++; }
+            else quoted = false;
+          } else {
+            field += character;
+          }
+        } else if (character === '"' && field === '') {
+          quoted = true;
+        } else if (character === delimiter) {
+          row.push(field);
+          field = '';
+        } else if (character === '\r' || character === '\n') {
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = '';
+          if (character === '\r' && text[index + 1] === '\n') index++;
+        } else {
+          field += character;
+        }
+      }
+      if (quoted) throw new Error('CSV obsahuje neuzavřenou hodnotu v uvozovkách.');
+      if (field !== '' || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function prepareCsv(text, fileName) {
+      if (!String(text || '').trim()) throw new Error('Vybraný CSV soubor je prázdný.');
+      const commaRows = parseCsv(text, ',');
+      const semicolonRows = parseCsv(text, ';');
+      const commaColumns = commaRows[0] ? commaRows[0].length : 0;
+      const semicolonColumns = semicolonRows[0] ? semicolonRows[0].length : 0;
+      const delimiter = semicolonColumns > commaColumns ? ';' : ',';
+      const parsed = delimiter === ';' ? semicolonRows : commaRows;
+      if (!parsed.length || !parsed[0].length) throw new Error('CSV neobsahuje hlavičku sloupců.');
+      const maximumColumns = parsed.reduce((maximum, row) => Math.max(maximum, row.length), 0);
+      const headers = Array.from({ length: maximumColumns }, (_, index) => {
+        const source = index < parsed[0].length ? parsed[0][index] : '';
+        const value = String(source || '').replace(/^\uFEFF/, '').trim();
+        return value || 'Sloupec ' + (index + 1);
+      });
+      if (headers.every(header => /^Sloupec \d+$/.test(header))) throw new Error('CSV neobsahuje použitelnou hlavičku sloupců.');
+      return {
+        fileName,
+        delimiter,
+        headers,
+        rows: parsed.slice(1),
+        mappings: headers.map(autoMapCsvHeader),
+        stage: 'mapping',
+        analysis: null
+      };
+    }
+
+    function csvHeaderKey(header) {
+      return normalizeText(header).replace(/[^a-z0-9]/g, '');
+    }
+
+    function autoMapCsvHeader(header) {
+      const key = csvHeaderKey(header);
+      if (['firstname', 'givenname', 'forename', 'jmeno', 'krestnijmeno'].includes(key)) return 'firstName';
+      if (['lastname', 'surname', 'familyname', 'prijmeni'].includes(key)) return 'lastName';
+      if (/^(phone|telephone|tel|mobile|mobil|telefon)(number)?\d*$/.test(key)) return 'phone';
+      if (/^(email|emailaddress|mail)\d*$/.test(key)) return 'email';
+      if (['note', 'notes', 'comment', 'comments', 'poznamka', 'poznamky'].includes(key)) return 'note';
+      return 'ignore';
+    }
+
+    function csvHeaderMustBeIgnored(header) {
+      return ['address', 'birthday', 'privacypolicyacceptedat', 'marketingnotificationsacceptedat'].includes(csvHeaderKey(header));
+    }
+
+    function uniqueCsvValues(values, type) {
+      const result = [];
+      const seen = new Set();
+      values.map(value => String(value || '').trim()).filter(Boolean).forEach(value => {
+        const key = type === 'phone' ? normalizePhone(value) : normalizeText(value);
+        if (!seen.has(key)) { seen.add(key); result.push(value); }
+      });
+      return result;
+    }
+
+    function mapCsvRow(row, mappings, headers = null) {
+      const valuesFor = mapping => row
+        .map((value, index) => mappings[index] === mapping && !(headers && csvHeaderMustBeIgnored(headers[index])) ? String(value || '').trim() : '')
+        .filter(Boolean);
+      const now = new Date().toISOString();
+      return sanitizeContact({
+        firstName: valuesFor('firstName').join(' '),
+        lastName: valuesFor('lastName').join(' '),
+        phones: uniqueCsvValues(valuesFor('phone'), 'phone'),
+        emails: uniqueCsvValues(valuesFor('email'), 'email'),
+        note: valuesFor('note').join('\n'),
+        groupIds: [IMPORTED_ID],
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+
+    function contactHasImportData(contact) {
+      return Boolean(contact.firstName || contact.lastName || contact.note || contact.phones.length || contact.emails.length);
+    }
+
+    function contactsPossiblyMatch(contact, candidate) {
+      const phones = new Set((contact.phones || []).map(normalizePhone).filter(Boolean));
+      const emails = new Set((contact.emails || []).map(value => normalizeText(value)).filter(Boolean));
+      return (candidate.phones || []).some(value => phones.has(normalizePhone(value))) ||
+        (candidate.emails || []).some(value => emails.has(normalizeText(value)));
+    }
+
+    function duplicateReason(contact, candidate) {
+      const phoneMatch = (candidate.phones || []).some(value => (contact.phones || []).map(normalizePhone).filter(Boolean).includes(normalizePhone(value)));
+      const emailMatch = (candidate.emails || []).some(value => (contact.emails || []).map(item => normalizeText(item)).filter(Boolean).includes(normalizeText(value)));
+      if (phoneMatch && emailMatch) return 'shodný telefon a e-mail';
+      if (phoneMatch) return 'shodný telefon';
+      return 'shodný e-mail';
+    }
+
+    function buildCsvAnalysis(csv) {
+      const newContacts = [];
+      const duplicates = [];
+      const previewContacts = [];
+      let ignoredBlank = 0;
+      let ignoredUnmapped = 0;
+      let nonEmptyRows = 0;
+      for (const row of csv.rows) {
+        if (row.every(value => !String(value || '').trim())) { ignoredBlank++; continue; }
+        nonEmptyRows++;
+        const contact = mapCsvRow(row, csv.mappings, csv.headers);
+        if (!contactHasImportData(contact)) { ignoredUnmapped++; continue; }
+        previewContacts.push(contact);
+        let target = activeContacts().find(existing => contactsPossiblyMatch(contact, existing));
+        let targetKind = 'existing';
+        if (!target) {
+          target = newContacts.find(existing => contactsPossiblyMatch(contact, existing));
+          targetKind = 'incoming';
+        }
+        if (target) {
+          duplicates.push({
+            incoming: contact,
+            target,
+            targetKind,
+            reason: duplicateReason(contact, target),
+            action: 'skip',
+            newId: makeId('contact'),
+            resolutions: { firstName: 'current', lastName: 'current', note: 'current' }
+          });
+        } else {
+          newContacts.push(contact);
+        }
+      }
+      return { totalRows: csv.rows.length, nonEmptyRows, ignoredBlank, ignoredUnmapped, newContacts, duplicates, previewContacts };
+    }
+
+    async function loadCsvFile(file) {
+      try {
+        state.csv = prepareCsv(await file.text(), file.name);
+        state.view = 'csv';
+        render();
+        focusMain();
+        announce('CSV bylo načteno. Zkontrolujte mapování sloupců.', 'success');
+      } catch (error) {
+        announce('CSV se nepodařilo načíst: ' + error.message, 'danger');
+      }
+    }
+
+    function csvMappingLabel(value) {
+      return ({ ignore: 'Ignorovat', firstName: 'Jméno', lastName: 'Příjmení', phone: 'Telefon', email: 'E-mail', note: 'Poznámka' })[value];
+    }
+
+    function renderCsvSummary(analysis, live = false) {
+      const section = el('section', { className: 'card csv-summary' });
+      if (live) {
+        section.setAttribute('role', 'status');
+        section.setAttribute('aria-live', 'polite');
+        section.setAttribute('aria-atomic', 'true');
+      }
+      section.append(el('h3', { text: 'Souhrn analýzy' }));
+      const list = el('ul');
+      const importable = analysis.newContacts.length + analysis.duplicates.length;
+      [
+        'Datové řádky v souboru: ' + analysis.totalRows,
+        'Nalezené neprázdné záznamy: ' + analysis.nonEmptyRows,
+        'Importovatelné kontakty: ' + importable,
+        'Nové kontakty bez nalezené shody: ' + analysis.newContacts.length,
+        'Ignorované úplně prázdné řádky: ' + analysis.ignoredBlank,
+        'Ignorované řádky bez namapovaných údajů: ' + analysis.ignoredUnmapped,
+        'Možné duplicity: ' + analysis.duplicates.length
+      ].forEach(text => list.append(el('li', { text })));
+      section.append(list);
+      return section;
+    }
+
+    function renderCsvPreviewContact(contact) {
+      const item = el('li', { className: 'card' }, el('p', { className: 'card-title', text: displayName(contact) }));
+      const values = [...(contact.phones || []), ...(contact.emails || [])];
+      if (values.length) item.append(el('p', { className: 'card-meta', text: values.join(' · ') }));
+      if (contact.note) item.append(el('p', { className: 'pre-wrap', text: contact.note }));
+      return item;
+    }
+
+    function cancelCsvImport() {
+      state.csv = null;
+      navigate('transfer');
+    }
+
+    function renderCsvImport() {
+      if (!state.csv) {
+        state.view = 'transfer';
+        renderTransfer();
+        return;
+      }
+      if (state.csv.stage === 'duplicates') renderCsvDuplicates();
+      else renderCsvMapping();
+    }
+
+    function createSelect(id, labelText, options, currentValue, onChange) {
+      const wrapper = el('div', { className: 'mapping-item' });
+      const label = el('label', { for: id, text: labelText });
+      const select = el('select', { id });
+      options.forEach(option => select.append(el('option', { value: option.value, text: option.label })));
+      select.value = currentValue;
+      select.addEventListener('change', () => onChange(select.value));
+      wrapper.append(label, select);
+      return wrapper;
+    }
+
+    function renderCsvMapping() {
+      const csv = state.csv;
+      app.append(button('Zrušit import CSV', cancelCsvImport, 'back-button quiet-button'), heading('Import CSV – mapování sloupců'));
+      app.append(el('p', { text: 'Soubor: ' + csv.fileName + '. Rozpoznaný oddělovač: ' + (csv.delimiter === ';' ? 'středník' : 'čárka') + '.' }));
+      app.append(el('p', { className: 'muted', text: 'Zkontrolujte automatické mapování. Více sloupců lze přiřadit k telefonu nebo e-mailu.' }));
+      const mappingSection = el('section', { 'aria-labelledby': 'csvMappingHeading' }, el('h3', { id: 'csvMappingHeading', text: 'Mapování' }));
+      const mappingList = el('ol', { className: 'mapping-list' });
+      const summaryPreview = el('div', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+      const contactsPreview = el('div');
+      const mappingOptions = ['ignore', 'firstName', 'lastName', 'phone', 'email', 'note'].map(value => ({ value, label: csvMappingLabel(value) }));
+      csv.headers.forEach((header, index) => {
+        if (csvHeaderMustBeIgnored(header)) {
+          csv.mappings[index] = 'ignore';
+          mappingList.append(el('li', { className: 'card mapping-item' },
+            el('p', { className: 'detail-label', text: 'Sloupec „' + header + '“' }),
+            el('p', { text: 'Ignorovat – tento údaj se do Adresáře neukládá.' })
+          ));
+          return;
+        }
+        const control = createSelect('csv-column-' + index, 'Sloupec „' + header + '“', mappingOptions, csv.mappings[index], value => {
+          csv.mappings[index] = value;
+          refreshPreview();
+        });
+        mappingList.append(el('li', { className: 'card' }, control));
+      });
+      mappingSection.append(mappingList);
+
+      const refreshPreview = () => {
+        const analysis = buildCsvAnalysis(csv);
+        summaryPreview.replaceChildren(renderCsvSummary(analysis));
+        const samples = analysis.previewContacts.slice(0, 5);
+        const previewSection = el('section', { 'aria-labelledby': 'csvPreviewHeading' }, el('h3', { id: 'csvPreviewHeading', text: 'Ukázka prvních převedených kontaktů' }));
+        if (samples.length) {
+          const list = el('ul', { className: 'preview-list' });
+          samples.forEach(contact => list.append(renderCsvPreviewContact(contact)));
+          previewSection.append(list);
+        } else {
+          previewSection.append(el('p', { className: 'muted', text: 'Při tomto mapování nevzniká žádný importovatelný kontakt.' }));
+        }
+        contactsPreview.replaceChildren(previewSection);
+      };
+
+      const continueButton = button('Pokračovat k řešení duplicit', () => {
+        const analysis = buildCsvAnalysis(csv);
+        if (!analysis.newContacts.length && !analysis.duplicates.length) {
+          announce('Při tomto mapování není co importovat.', 'danger');
+          return;
+        }
+        csv.analysis = analysis;
+        csv.stage = 'duplicates';
+        render();
+        focusMain();
+      }, 'primary');
+      app.append(mappingSection, summaryPreview, contactsPreview, el('div', { className: 'row' }, continueButton, button('Zrušit', cancelCsvImport)));
+      refreshPreview();
+    }
+
+    function cloneContact(contact, id = contact.id) {
+      return {
+        ...contact,
+        id,
+        phones: [...(contact.phones || [])],
+        emails: [...(contact.emails || [])],
+        groupIds: [...(contact.groupIds || [])]
+      };
+    }
+
+    function resolveCsvText(current, incoming, resolution) {
+      if (!current) return incoming || '';
+      if (!incoming || current === incoming) return current;
+      return resolution === 'imported' ? incoming : current;
+    }
+
+    function mergeCsvContacts(current, incoming, resolutions) {
+      let note = current.note || incoming.note || '';
+      if (current.note && incoming.note && current.note !== incoming.note) {
+        if (resolutions.note === 'imported') note = incoming.note;
+        else if (resolutions.note === 'combine') note = current.note + '\n\n' + incoming.note;
+        else note = current.note;
+      }
+      return {
+        ...current,
+        firstName: resolveCsvText(current.firstName, incoming.firstName, resolutions.firstName),
+        lastName: resolveCsvText(current.lastName, incoming.lastName, resolutions.lastName),
+        phones: uniqueCsvValues([...(current.phones || []), ...(incoming.phones || [])], 'phone'),
+        emails: uniqueCsvValues([...(current.emails || []), ...(incoming.emails || [])], 'email'),
+        note,
+        groupIds: [...(current.groupIds || [])],
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    function computeCsvImportPlan() {
+      const analysis = state.csv.analysis;
+      const additions = new Map(analysis.newContacts.map(contact => [contact.id, cloneContact(contact)]));
+      const updates = new Map();
+      const previews = new Map();
+      analysis.duplicates.forEach((item, index) => {
+        if (item.action === 'new') {
+          additions.set(item.newId, cloneContact(item.incoming, item.newId));
+        } else if (item.action === 'merge') {
+          const current = item.targetKind === 'existing'
+            ? updates.get(item.target.id) || cloneContact(item.target)
+            : additions.get(item.target.id) || cloneContact(item.target);
+          const merged = mergeCsvContacts(current, item.incoming, item.resolutions);
+          if (item.targetKind === 'existing') updates.set(merged.id, merged);
+          else additions.set(merged.id, merged);
+          previews.set(index, merged);
+        }
+      });
+      return { additions: [...additions.values()], updates: [...updates.values()], previews };
+    }
+
+    function csvTextConflict(current, incoming) {
+      return Boolean(current && incoming && current !== incoming);
+    }
+
+    function appendCsvConflictSelect(container, item, field, labelText, options) {
+      if (!csvTextConflict(item.target[field], item.incoming[field])) return;
+      const index = state.csv.analysis.duplicates.indexOf(item);
+      const comparison = el('div', { className: 'card' },
+        el('p', { className: 'detail-label', text: labelText }),
+        el('p', { className: field === 'note' ? 'pre-wrap' : '', text: 'Současná hodnota: ' + item.target[field] }),
+        el('p', { className: field === 'note' ? 'pre-wrap' : '', text: 'Importovaná hodnota: ' + item.incoming[field] })
+      );
+      comparison.append(createSelect('csv-conflict-' + index + '-' + field, 'Výsledná hodnota', options, item.resolutions[field], value => {
+        item.resolutions[field] = value;
+        refreshCsvMergePreviews();
+      }));
+      container.append(comparison);
+    }
+
+    function renderMergedContactPreview(contact) {
+      const section = el('section', { className: 'merge-preview' }, el('h4', { text: 'Náhled výsledného kontaktu' }));
+      const details = el('div', { className: 'detail-fields' });
+      addDetail(details, 'Jméno', contact.firstName);
+      addDetail(details, 'Příjmení', contact.lastName);
+      addDetailList(details, 'Telefonní čísla', contact.phones);
+      addDetailList(details, 'E-mailové adresy', contact.emails);
+      addDetail(details, 'Poznámka', contact.note, 'pre-wrap');
+      addDetailList(details, 'Skupiny', (contact.groupIds || []).map(groupName).filter(Boolean));
+      section.append(details);
+      return section;
+    }
+
+    function refreshCsvMergePreviews() {
+      const plan = computeCsvImportPlan();
+      app.querySelectorAll('[data-merge-preview]').forEach(container => {
+        const contact = plan.previews.get(Number(container.dataset.mergePreview));
+        if (contact) container.replaceChildren(renderMergedContactPreview(contact));
+        else container.replaceChildren();
+      });
+    }
+
+    function renderCsvDuplicateItem(item, index) {
+      const card = el('li', { className: 'card' });
+      card.append(el('h3', { text: 'Možná duplicita ' + (index + 1) + ': ' + displayName(item.incoming) }));
+      card.append(el('p', { text: 'Nalezena shoda s kontaktem „' + displayName(item.target) + '“ – ' + item.reason + '.' }));
+      const conflictArea = el('div', { className: 'compact-stack' });
+      const actionOptions = [
+        { value: 'skip', label: 'Přeskočit' },
+        { value: 'new', label: 'Importovat jako nový' },
+        { value: 'merge', label: 'Sloučit' }
+      ];
+      const action = createSelect('csv-duplicate-action-' + index, 'Jak naložit se záznamem „' + displayName(item.incoming) + '“', actionOptions, item.action, value => {
+        item.action = value;
+        updateConflictArea();
+      });
+      card.append(action, conflictArea);
+
+      const updateConflictArea = () => {
+        conflictArea.replaceChildren();
+        if (item.action !== 'merge') { refreshCsvMergePreviews(); return; }
+        conflictArea.append(el('p', { className: 'muted', text: 'Telefony a e-maily se doplní bez přepsání současných hodnot. Existující skupiny zůstanou zachované.' }));
+        const textOptions = [
+          { value: 'current', label: 'Ponechat současnou hodnotu' },
+          { value: 'imported', label: 'Použít importovanou hodnotu' }
+        ];
+        appendCsvConflictSelect(conflictArea, item, 'firstName', 'Rozdílné jméno', textOptions);
+        appendCsvConflictSelect(conflictArea, item, 'lastName', 'Rozdílné příjmení', textOptions);
+        appendCsvConflictSelect(conflictArea, item, 'note', 'Rozdílná poznámka', [
+          { value: 'current', label: 'Ponechat současnou' },
+          { value: 'imported', label: 'Použít importovanou' },
+          { value: 'combine', label: 'Spojit obě' }
+        ]);
+        conflictArea.append(el('div', { 'data-merge-preview': String(index) }));
+        refreshCsvMergePreviews();
+      };
+      updateConflictArea();
+      return card;
+    }
+
+    function renderCsvDuplicates() {
+      const csv = state.csv;
+      const analysis = csv.analysis;
+      app.append(button('Zpět k mapování', () => { csv.stage = 'mapping'; render(); focusMain(); }, 'back-button quiet-button'));
+      app.append(heading('Import CSV – kontrola a duplicity'), renderCsvSummary(analysis));
+      app.append(el('p', { text: 'Nové kontakty lze importovat hromadně. U každé možné duplicity samostatně zvolte bezpečný postup.' }));
+      if (analysis.duplicates.length) {
+        const section = el('section', { 'aria-labelledby': 'csvDuplicatesHeading' }, el('h3', { id: 'csvDuplicatesHeading', text: 'Možné duplicity' }));
+        const list = el('ol', { className: 'duplicate-list' });
+        analysis.duplicates.forEach((item, index) => list.append(renderCsvDuplicateItem(item, index)));
+        section.append(list);
+        app.append(section);
+      } else {
+        app.append(el('p', { className: 'muted', text: 'Nebyly nalezeny žádné možné duplicity.' }));
+      }
+      app.append(el('div', { className: 'row' },
+        button('Potvrdit a importovat', completeCsvImport, 'primary'),
+        button('Zrušit import', cancelCsvImport)
+      ));
+      refreshCsvMergePreviews();
+    }
+
+    async function completeCsvImport() {
+      const plan = computeCsvImportPlan();
+      const merges = state.csv.analysis.duplicates.filter(item => item.action === 'merge').length;
+      if (!plan.additions.length && !plan.updates.length) {
+        announce('Nejsou vybrané žádné kontakty k importu.', 'danger');
+        return;
+      }
+      const approved = await confirmAction(
+        'Provést CSV import?',
+        'Bude přidáno ' + plan.additions.length + ' nových kontaktů a sloučeno ' + merges + ' možných duplicit.',
+        'Importovat kontakty'
+      );
+      if (!approved) return;
+      try {
+        await putContacts([...plan.updates, ...plan.additions]);
+        const imported = plan.additions.length;
+        state.csv = null;
+        state.globalQuery = '';
+        state.view = 'home';
+        await reloadData();
+        render();
+        focusMain();
+        announce('CSV import dokončen: přidáno ' + imported + ' kontaktů, sloučeno ' + merges + '.', 'success');
+      } catch (error) {
+        announce('CSV import se nezdařil: ' + error.message, 'danger');
+      }
     }
 
     function downloadFile(content, mime, extension) {
@@ -1341,12 +2112,14 @@
       const sections = [
         ['Přidání a úprava kontaktu', 'Tlačítkem „Přidat kontakt“ otevřete formulář. Můžete vyplnit libovolné údaje, přidat více telefonů a e-mailů a zvolit skupiny. Změny se uloží jen tlačítkem „Uložit“. Kontakt upravíte z jeho detailu.'],
         ['Skupiny', 'Skupiny vytvoříte, přejmenujete nebo smažete ve Správě skupin. Jeden kontakt může být ve více skupinách. Smazání skupiny nikdy nesmaže její kontakty. „Všechny kontakty“ je stálý pohled na celý adresář.'],
+        ['Hromadná práce s kontakty', 'V seznamu zvolte „Vybrat kontakty“. Můžete vybrat právě zobrazené kontakty, přidat je do skupin, odebrat je ze skupin nebo je přesunout do Koše. Výběr zůstává zachovaný i při změně hledání, dokud ho nezrušíte nebo režim výběru neopustíte.'],
         ['Hledání', 'Globální hledání na hlavní obrazovce prohledává všechny kontakty, jejich telefony, e-maily, poznámky a názvy skupin. V otevřené skupině hledáte pouze v ní. Hledání ignoruje rozdíly v diakritice a běžné formátování telefonů.'],
         ['Volání, SMS a e-mail', 'V detailu kontaktu zvolte „Zavolat“, „Napsat SMS“ nebo „Napsat e-mail“. Adresář nic neodesílá sám; pouze předá vybraný údaj příslušné aplikaci zařízení.'],
         ['Koš', 'Smazaný kontakt se přesune do Koše a zůstane tam bez časového omezení. Můžete ho obnovit, definitivně smazat nebo po výrazném potvrzení vysypat celý Koš.'],
         ['JSON záloha a obnova', 'JSON je úplná záloha: obsahuje kontakty, skupiny, vazby i Koš. Při sloučení zůstanou současná data zachována a konflikty posoudíte ručně. Obnova současnou databázi nahradí; aplikace vám nejprve nabídne stažení bezpečnostní zálohy.'],
         ['VCF import a export', 'VCF slouží k přenosu běžných kontaktních údajů, ne jako úplná záloha. Při importu se kontrolují možné duplicity podle telefonu a e-mailu. VCF exportuje pouze aktivní kontakty, ne Koš a interní stav.'],
-        ['Skupina „Importované“', 'Každý nově přidaný kontakt z VCF se objeví ve skupině „Importované“. Jakmile mu při úpravě přiřadíte jinou běžnou skupinu, z „Importovaných“ se odebere. Skupina sama zmizí, až v ní nezůstane žádný aktivní kontakt. Při sloučení se existující kontakt do této skupiny nepřidá.'],
+        ['CSV import', 'Po výběru CSV nejprve zkontrolujete mapování sloupců a náhled. Nové kontakty se importují hromadně a možné duplicity vyřešíte jednotlivě jako přeskočení, nový kontakt nebo kontrolované sloučení. CSV se zpracovává pouze lokálně v prohlížeči.'],
+        ['Skupina „Importované“', 'Každý nově přidaný kontakt z VCF nebo CSV se objeví ve skupině „Importované“. Jakmile mu při úpravě nebo hromadnou operací přiřadíte jinou běžnou skupinu, z „Importovaných“ se odebere. Skupina sama zmizí, až v ní nezůstane žádný aktivní kontakt. Při sloučení se existující kontakt do této skupiny nepřidá.'],
         ['Kde jsou data uložena', 'Data zůstávají pouze v místní databázi IndexedDB tohoto prohlížeče a nesynchronizují se do cloudu ani do systémových kontaktů. Vymazání dat webu nebo prohlížeče může databázi nenávratně odstranit. Proto pravidelně stahujte úplnou JSON zálohu.']
       ];
       sections.forEach(([title, text]) => article.append(el('section', { className: 'card' }, el('h3', { text: title }), el('p', { text }))));
@@ -1364,6 +2137,14 @@
     addContactButton.addEventListener('click', openNewContact);
     jsonFileInput.addEventListener('change', () => { const file = jsonFileInput.files[0]; if (file) importJsonFile(file, state.pendingJsonMode); });
     vcfFileInput.addEventListener('change', () => { const file = vcfFileInput.files[0]; if (file) importVcfFile(file); });
+    csvFileInput.addEventListener('change', () => { const file = csvFileInput.files[0]; if (file) loadCsvFile(file); });
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && state.selectionMode && !document.querySelector('dialog[open]')) {
+        event.preventDefault();
+        exitSelection();
+        announce('Režim výběru byl ukončen.');
+      }
+    });
     window.addEventListener('beforeunload', event => { if (state.formDirty) { event.preventDefault(); event.returnValue = ''; } });
 
     async function start() {
