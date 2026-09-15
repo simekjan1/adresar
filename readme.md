@@ -19,12 +19,14 @@ Do budoucna nevylučuji, že projekt zveřejním i jako aplikaci určenou ostatn
 - žádná analytika ani telemetrie,
 - žádné externí knihovny nebo síťové služby,
 - skupiny kontaktů,
+- hromadný výběr kontaktů, přidávání a odebírání skupin a přesun do Koše,
 - globální vyhledávání,
 - více telefonních čísel a e-mailů u jednoho kontaktu,
 - volání, SMS a e-mail pomocí systémových aplikací,
 - Koš bez automatického mazání,
 - kompletní záloha a obnova pomocí JSON,
 - import a export kontaktů ve formátu VCF/vCard,
+- obecný import CSV s mapováním sloupců, náhledem a bezpečným řešením duplicit,
 - ovládání z klávesnice,
 - přístupnost pro odečítače obrazovky včetně Android TalkBacku,
 - responzivní tmavé rozhraní.
@@ -32,6 +34,8 @@ Do budoucna nevylučuji, že projekt zveřejním i jako aplikaci určenou ostatn
 ## Soukromí
 
 Aplikace neposílá kontakty na server.
+
+Také CSV soubory se načítají a zpracovávají pouze lokálně v prohlížeči. Jejich obsah se nikam neodesílá.
 
 Data jsou ukládána lokálně v IndexedDB konkrétního prohlížeče. GitHub Pages slouží pouze k distribuci samotné aplikace.
 
@@ -71,11 +75,11 @@ Nejsou potřeba žádné externí závislosti ani instalace.
 
 ## Stav projektu
 
-**Aktuální verze: 1.0**
+**Aktuální verze: 1.1**
 
-Verze 1.0 je funkční a používám ji v běžném provozu.
+Verze 1.1 doplňuje hromadnou práci s kontakty, univerzální CSV import a společnou obrazovku pro import, export a zálohy.
 
-Další vývoj bude vycházet především ze zkušeností při skutečném používání. Případná verze 1.1 proto vznikne až podle toho, které změny a nové funkce se ukážou jako skutečně užitečné.
+Další vývoj bude vycházet především ze zkušeností při skutečném používání.
 
 ## Upozornění
 
