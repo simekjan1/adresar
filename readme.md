@@ -62,7 +62,7 @@ Aplikace byla prakticky testována s TalkBackem na Androidu i pomocí klávesnic
 
 ## Technologie
 
-Celá aplikace je obsažena v jediném souboru `adresar.html`.
+Hlavní aplikace Adresář je obsažena v souboru `index.html`.
 
 Používá pouze:
 
@@ -72,6 +72,12 @@ Používá pouze:
 - IndexedDB.
 
 Nejsou potřeba žádné externí závislosti ani instalace.
+
+## SENC
+
+Soubor `senc.html` je samostatná doplňková utilita. SENC verze 1 šifruje JSON soubory heslem pomocí standardního Web Crypto API a veškeré zpracování provádí lokálně v prohlížeči.
+
+Hesla se neukládají a zapomenuté heslo nelze obnovit. SENC původní soubory nemaže; o jejich případném odstranění rozhoduje uživatel. Současná verze podporuje JSON, základní formát ale umožňuje v budoucnu přidat další typy souborů.
 
 ## Stav projektu
 

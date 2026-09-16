@@ -45,6 +45,8 @@
       cursor: pointer;
     }
 
+    .button-link { display: inline-flex; align-items: center; text-decoration: none; }
+
     button:hover, .button-link:hover { border-color: var(--accent); }
     button:disabled { opacity: .55; cursor: not-allowed; }
 
@@ -220,7 +222,7 @@
     dialog::backdrop { background: #000c; }
     dialog h2 { margin-top: 0; }
     .dialog-actions { display: grid; gap: .7rem; margin: 1.2rem 0 0; padding: 0; }
-    .dialog-actions button { width: 100%; text-align: left; }
+    .dialog-actions button, .dialog-actions .button-link { width: 100%; text-align: left; }
 
     .status {
       position: fixed;
@@ -264,6 +266,7 @@
     <nav class="dialog-actions" aria-label="Položky hlavního menu">
       <button type="button" data-view="groups">Správa skupin</button>
       <button type="button" data-view="transfer">Import, export a zálohy</button>
+      <a class="button-link" href="senc.html">SENC – šifrování souborů</a>
       <button type="button" data-view="trash">Koš</button>
       <button type="button" data-view="help">Návod</button>
       <button id="closeMenuButton" class="quiet-button" type="button">Zavřít menu</button>

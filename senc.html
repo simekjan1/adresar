@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>SENC – šifrování souborů</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090a0b;
+      --surface: #141619;
+      --surface-2: #1d2024;
+      --text: #f1f2f3;
+      --muted: #aeb3b9;
+      --accent: #a9bdf5;
+      --border: #41464d;
+      --max: 52rem;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { font-size: 100%; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    button, input { font: inherit; }
+
+    button {
+      min-height: 3rem;
+      padding: .65rem .9rem;
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
+    :focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      padding: .7rem max(1rem, env(safe-area-inset-left));
+      background: #101113;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .55rem;
+      width: min(100%, var(--max));
+      margin: 0 auto;
+      padding: 0;
+      list-style: none;
+    }
+
+    .nav-list button[aria-current="page"] {
+      border-color: var(--accent);
+      background: #292d33;
+    }
+
+    main {
+      width: min(100%, var(--max));
+      margin: 0 auto;
+      padding: 1rem 1rem 4rem;
+    }
+
+    h1, h2 { line-height: 1.25; }
+    h1 { margin: .4rem 0 1rem; font-size: 1.55rem; }
+    h2 { margin: 0 0 .65rem; font-size: 1.15rem; }
+    p { max-width: 70ch; }
+
+    .stack { display: grid; gap: 1rem; }
+    .hidden { display: none !important; }
+    .muted { color: var(--muted); }
+
+    .card {
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: .6rem;
+      background: var(--surface);
+    }
+
+    .card > :first-child { margin-top: 0; }
+    .card > :last-child { margin-bottom: 0; }
+
+    label { font-weight: 650; }
+
+    input[type="password"], input[type="text"] {
+      width: 100%;
+      min-height: 3rem;
+      margin-top: .35rem;
+      padding: .65rem .75rem;
+      border: 1px solid var(--border);
+      border-radius: .45rem;
+      background: #0d0f11;
+      color: var(--text);
+    }
+
+    input[type="file"] {
+      width: 100%;
+      min-height: 3rem;
+      padding: .7rem;
+      border: 1px solid var(--border);
+      border-radius: .45rem;
+      background: #0d0f11;
+      color: var(--text);
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      min-height: 3rem;
+    }
+
+    .check-row input { width: 1.75rem; height: 1.75rem; flex: 0 0 auto; }
+    .check-row label { display: flex; align-items: center; min-height: 3rem; }
+
+    .primary { border-color: var(--accent); background: #292d33; }
+
+    .status {
+      min-height: 1.5rem;
+      margin: 0;
+      padding: .85rem 1rem;
+      border-left: .3rem solid var(--accent);
+      background: var(--surface-2);
+      overflow-wrap: anywhere;
+    }
+
+    .status:empty { display: none; }
+    .file-info { margin: -.35rem 0 0; overflow-wrap: anywhere; }
+    .help-list { padding-left: 1.4rem; }
+
+    @media (min-width: 42rem) {
+      main { padding-inline: 1.4rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Hlavní navigace SENC">
+      <ul class="nav-list">
+        <li><button type="button" data-view="encrypt" aria-controls="encryptView" aria-current="page">Zašifrovat</button></li>
+        <li><button type="button" data-view="decrypt" aria-controls="decryptView">Dešifrovat</button></li>
+        <li><button type="button" data-view="help" aria-controls="helpView">Návod</button></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <section id="encryptView" data-screen="encrypt" aria-labelledby="encryptHeading">
+      <h1 id="encryptHeading" tabindex="-1">Zašifrovat soubor</h1>
+      <form id="encryptForm" class="stack" novalidate>
+        <div>
+          <label for="encryptFile">JSON soubor</label>
+          <input id="encryptFile" type="file" accept="application/json,.json">
+        </div>
+        <p id="encryptFileInfo" class="file-info muted" aria-live="polite">Není vybrán žádný soubor.</p>
+        <div>
+          <label for="encryptPassword">Heslo</label>
+          <input id="encryptPassword" type="password" autocomplete="new-password" aria-describedby="passwordRequirements">
+          <p id="passwordRequirements" class="muted">8 až 64 znaků, malé a velké písmeno, číslice a speciální znak.</p>
+        </div>
+        <div>
+          <label for="encryptPasswordAgain">Heslo znovu</label>
+          <input id="encryptPasswordAgain" type="password" autocomplete="new-password">
+        </div>
+        <div class="check-row">
+          <input id="showEncryptPasswords" type="checkbox">
+          <label for="showEncryptPasswords">Zobrazit hesla</label>
+        </div>
+        <button id="encryptButton" class="primary" type="submit">Zašifrovat</button>
+        <p id="encryptStatus" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </form>
+    </section>
+
+    <section id="decryptView" class="hidden" data-screen="decrypt" aria-labelledby="decryptHeading">
+      <h1 id="decryptHeading" tabindex="-1">Dešifrovat soubor</h1>
+      <form id="decryptForm" class="stack" novalidate>
+        <div>
+          <label for="decryptFile">Soubor SENC</label>
+          <input id="decryptFile" type="file" accept="application/json,.senc">
+        </div>
+        <p id="decryptFileInfo" class="file-info muted" aria-live="polite">Není vybrán žádný soubor.</p>
+        <div>
+          <label for="decryptPassword">Heslo</label>
+          <input id="decryptPassword" type="password" autocomplete="current-password">
+        </div>
+        <div class="check-row">
+          <input id="showDecryptPassword" type="checkbox">
+          <label for="showDecryptPassword">Zobrazit heslo</label>
+        </div>
+        <button id="decryptButton" class="primary" type="submit">Dešifrovat</button>
+        <p id="decryptStatus" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </form>
+    </section>
+
+    <section id="helpView" class="hidden" data-screen="help" aria-labelledby="helpHeading">
+      <h1 id="helpHeading" tabindex="-1">Návod</h1>
+      <div class="stack">
+        <section class="card">
+          <h2>Co SENC dělá</h2>
+          <p>SENC je samostatná utilita pro šifrování JSON souborů heslem a jejich pozdější obnovení. Veškeré zpracování probíhá lokálně v prohlížeči a obsah souborů ani hesla se nikam neodesílají.</p>
+        </section>
+        <section class="card">
+          <h2>Jak soubor zašifrovat</h2>
+          <ol class="help-list">
+            <li>Na obrazovce Zašifrovat vyberte platný JSON soubor.</li>
+            <li>Zadejte stejné nové heslo do obou polí.</li>
+            <li>Zvolte Zašifrovat a bezpečně uložte stažený soubor s příponou .senc.</li>
+          </ol>
+          <p>Nové heslo musí mít 8 až 64 znaků a obsahovat malé písmeno, velké písmeno, číslici a speciální znak.</p>
+        </section>
+        <section class="card">
+          <h2>Jak soubor dešifrovat</h2>
+          <ol class="help-list">
+            <li>Na obrazovce Dešifrovat vyberte soubor .senc.</li>
+            <li>Zadejte heslo použité při šifrování.</li>
+            <li>Zvolte Dešifrovat. Po úspěšné kontrole se stáhne původní JSON.</li>
+          </ol>
+        </section>
+        <section class="card">
+          <h2>Heslo a obnova dat</h2>
+          <p>SENC hesla neukládá a zapomenuté heslo nelze obnovit. Heslo si bezpečně uložte sami, například do správce hesel. Nesprávné heslo nebo poškozený soubor mohou dešifrování znemožnit.</p>
+        </section>
+        <section class="card">
+          <h2>Původní soubory</h2>
+          <p>SENC původní soubory nemaže ani nemění. O jejich případném odstranění rozhodujete pouze vy. Před odstraněním originálu doporučujeme ověřit, že vytvořený soubor SENC lze úspěšně dešifrovat.</p>
+        </section>
+        <section class="card">
+          <h2>Podporované soubory</h2>
+          <p>SENC verze 1 podporuje pouze JSON. Základní formát umožňuje, aby budoucí verze přidaly další typy souborů.</p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  (() => {
+    'use strict';
+
+    // SENC v1 cryptographic and binary-format core. Keep this block free of DOM dependencies.
+    // CORE_START
+    const FORMAT_NAME = 'SENC';
+    const FORMAT_VERSION = 1;
+    const PAYLOAD_VERSION = 1;
+    const PBKDF2_ITERATIONS = 600000;
+    const MIN_PBKDF2_ITERATIONS = 100000;
+    const MAX_PBKDF2_ITERATIONS = 2000000;
+    const SALT_BYTES = 16;
+    const IV_BYTES = 12;
+    const GCM_TAG_BITS = 128;
+    const GCM_TAG_BYTES = GCM_TAG_BITS / 8;
+    const MAX_JSON_BYTES = 50 * 1024 * 1024;
+    const MAX_SENC_BYTES = 70 * 1024 * 1024;
+    const MAX_NAME_BYTES = 1024;
+    const MAX_TYPE_BYTES = 16;
+    const PAYLOAD_HEADER_BYTES = 17;
+    const ORIGINAL_TYPE = 'json';
+    const utf8Encoder = new TextEncoder();
+    const fatalUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
+
+    const MESSAGE_INVALID_SENC = 'Soubor není platný soubor SENC.';
+    const MESSAGE_UNSUPPORTED_VERSION = 'Soubor používá nepodporovanou verzi formátu SENC.';
+    const MESSAGE_AUTH_FAILED = 'Soubor se nepodařilo dešifrovat. Heslo je nesprávné nebo byl soubor poškozen.';
+
+    class SencError extends Error {
+      constructor(message, code = 'invalid') {
+        super(message);
+        this.name = 'SencError';
+        this.code = code;
+      }
+    }
+
+    function invalidSenc() {
+      return new SencError(MESSAGE_INVALID_SENC, 'invalid');
+    }
+
+    function exactKeys(value, expected) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const keys = Object.keys(value);
+      return keys.length === expected.length && expected.every(key => Object.prototype.hasOwnProperty.call(value, key));
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+      }
+      return btoa(binary);
+    }
+
+    function decodedBase64Length(value) {
+      const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+      return (value.length / 4) * 3 - padding;
+    }
+
+    function base64ToBytes(value, maximumLength, allowEmpty = false) {
+      if (typeof value !== 'string' || (!allowEmpty && value.length === 0) || value.length % 4 !== 0) throw invalidSenc();
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw invalidSenc();
+      const expectedLength = decodedBase64Length(value);
+      if (!Number.isSafeInteger(expectedLength) || expectedLength < 0 || expectedLength > maximumLength) throw invalidSenc();
+      let binary;
+      try { binary = atob(value); } catch (_) { throw invalidSenc(); }
+      if (binary.length !== expectedLength) throw invalidSenc();
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+      if (bytesToBase64(bytes) !== value) throw invalidSenc();
+      return bytes;
+    }
+
+    function writeUint64BE(view, offset, value) {
+      if (!Number.isSafeInteger(value) || value < 0) throw new SencError('Neplatná délka původního souboru.');
+      const high = Math.floor(value / 0x100000000);
+      const low = value - high * 0x100000000;
+      view.setUint32(offset, high, false);
+      view.setUint32(offset + 4, low, false);
+    }
+
+    function readUint64BE(view, offset) {
+      const high = view.getUint32(offset, false);
+      const low = view.getUint32(offset + 4, false);
+      const value = high * 0x100000000 + low;
+      if (!Number.isSafeInteger(value)) throw invalidSenc();
+      return value;
+    }
+
+    /*
+      SENC v1 plaintext payload, all integers unsigned and big-endian:
+      offset  size  field
+      0       1     payloadVersion (uint8, value 1)
+      1       4     originalNameLength (uint32, UTF-8 byte length)
+      5       4     originalTypeLength (uint32, UTF-8 byte length)
+      9       8     originalSize (uint64, exact source-data byte length)
+      17      N     originalName (N UTF-8 bytes)
+      17+N    T     originalType (T UTF-8 bytes; "json" in v1)
+      17+N+T  S     original data (S raw bytes, not Base64)
+      The payload ends immediately after the S data bytes; trailing bytes are invalid.
+    */
+    function buildBinaryPayload(originalBytes, originalName, originalType = ORIGINAL_TYPE) {
+      if (!(originalBytes instanceof Uint8Array) || originalBytes.length > MAX_JSON_BYTES) throw new SencError('Neplatná velikost původního souboru.');
+      const nameBytes = utf8Encoder.encode(originalName);
+      const typeBytes = utf8Encoder.encode(originalType);
+      if (nameBytes.length < 1 || nameBytes.length > MAX_NAME_BYTES) throw new SencError('Název souboru je příliš dlouhý nebo neplatný.');
+      if (typeBytes.length < 1 || typeBytes.length > MAX_TYPE_BYTES || originalType !== ORIGINAL_TYPE) throw new SencError('Nepodporovaný typ původního souboru.');
+      const totalLength = PAYLOAD_HEADER_BYTES + nameBytes.length + typeBytes.length + originalBytes.length;
+      const payload = new Uint8Array(totalLength);
+      const view = new DataView(payload.buffer);
+      view.setUint8(0, PAYLOAD_VERSION);
+      view.setUint32(1, nameBytes.length, false);
+      view.setUint32(5, typeBytes.length, false);
+      writeUint64BE(view, 9, originalBytes.length);
+      let offset = PAYLOAD_HEADER_BYTES;
+      payload.set(nameBytes, offset);
+      offset += nameBytes.length;
+      payload.set(typeBytes, offset);
+      offset += typeBytes.length;
+      payload.set(originalBytes, offset);
+      return payload;
+    }
+
+    function parseBinaryPayload(payloadBytes) {
+      if (!(payloadBytes instanceof Uint8Array) || payloadBytes.length < PAYLOAD_HEADER_BYTES) throw invalidSenc();
+      const view = new DataView(payloadBytes.buffer, payloadBytes.byteOffset, payloadBytes.byteLength);
+      if (view.getUint8(0) !== PAYLOAD_VERSION) throw invalidSenc();
+      const nameLength = view.getUint32(1, false);
+      const typeLength = view.getUint32(5, false);
+      const originalSize = readUint64BE(view, 9);
+      if (nameLength < 1 || nameLength > MAX_NAME_BYTES || typeLength < 1 || typeLength > MAX_TYPE_BYTES) throw invalidSenc();
+      if (originalSize > MAX_JSON_BYTES) throw invalidSenc();
+      const metadataEnd = PAYLOAD_HEADER_BYTES + nameLength + typeLength;
+      if (!Number.isSafeInteger(metadataEnd) || metadataEnd > payloadBytes.length) throw invalidSenc();
+      const expectedEnd = metadataEnd + originalSize;
+      if (!Number.isSafeInteger(expectedEnd) || expectedEnd !== payloadBytes.length) throw invalidSenc();
+      let originalName;
+      let originalType;
+      try {
+        originalName = fatalUtf8Decoder.decode(payloadBytes.subarray(PAYLOAD_HEADER_BYTES, PAYLOAD_HEADER_BYTES + nameLength));
+        originalType = fatalUtf8Decoder.decode(payloadBytes.subarray(PAYLOAD_HEADER_BYTES + nameLength, metadataEnd));
+      } catch (_) {
+        throw invalidSenc();
+      }
+      if (originalType !== ORIGINAL_TYPE) throw invalidSenc();
+      return {
+        originalName,
+        originalType,
+        originalSize,
+        data: payloadBytes.slice(metadataEnd, expectedEnd)
+      };
+    }
+
+    function makeAad(iterations, saltBase64, ivBase64) {
+      return utf8Encoder.encode(
+        'SENC|1|PBKDF2|SHA-256|' + iterations + '|AES-GCM|256|128|' + saltBase64 + '|' + ivBase64
+      );
+    }
+
+    async function deriveAesKey(password, salt, iterations, usage) {
+      const passwordKey = await crypto.subtle.importKey(
+        'raw',
+        utf8Encoder.encode(password),
+        'PBKDF2',
+        false,
+        ['deriveKey']
+      );
+      return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+        passwordKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        [usage]
+      );
+    }
+
+    async function encryptBytes(originalBytes, originalName, password) {
+      const payload = buildBinaryPayload(originalBytes, originalName);
+      const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+      const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+      const saltBase64 = bytesToBase64(salt);
+      const ivBase64 = bytesToBase64(iv);
+      const aad = makeAad(PBKDF2_ITERATIONS, saltBase64, ivBase64);
+      const key = await deriveAesKey(password, salt, PBKDF2_ITERATIONS, 'encrypt');
+      const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: aad, tagLength: GCM_TAG_BITS },
+        key,
+        payload
+      );
+      return {
+        format: FORMAT_NAME,
+        version: FORMAT_VERSION,
+        kdf: {
+          name: 'PBKDF2',
+          hash: 'SHA-256',
+          iterations: PBKDF2_ITERATIONS,
+          salt: saltBase64
+        },
+        cipher: {
+          name: 'AES-GCM',
+          keyLength: 256,
+          iv: ivBase64,
+          tagLength: GCM_TAG_BITS
+        },
+        payload: bytesToBase64(new Uint8Array(encrypted))
+      };
+    }
+
+    function validateEnvelope(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value) || value.format !== FORMAT_NAME) throw invalidSenc();
+      if (value.version !== FORMAT_VERSION) throw new SencError(MESSAGE_UNSUPPORTED_VERSION, 'unsupported-version');
+      if (!exactKeys(value, ['format', 'version', 'kdf', 'cipher', 'payload'])) throw invalidSenc();
+      if (!exactKeys(value.kdf, ['name', 'hash', 'iterations', 'salt'])) throw invalidSenc();
+      if (!exactKeys(value.cipher, ['name', 'keyLength', 'iv', 'tagLength'])) throw invalidSenc();
+      if (value.kdf.name !== 'PBKDF2' || value.kdf.hash !== 'SHA-256') throw invalidSenc();
+      const iterations = value.kdf.iterations;
+      if (!Number.isFinite(iterations) || !Number.isInteger(iterations) || iterations < MIN_PBKDF2_ITERATIONS || iterations > MAX_PBKDF2_ITERATIONS) throw invalidSenc();
+      if (value.cipher.name !== 'AES-GCM' || value.cipher.keyLength !== 256 || value.cipher.tagLength !== GCM_TAG_BITS) throw invalidSenc();
+      const maximumCiphertext = MAX_JSON_BYTES + PAYLOAD_HEADER_BYTES + MAX_NAME_BYTES + MAX_TYPE_BYTES + GCM_TAG_BYTES;
+      const salt = base64ToBytes(value.kdf.salt, SALT_BYTES);
+      const iv = base64ToBytes(value.cipher.iv, IV_BYTES);
+      const ciphertext = base64ToBytes(value.payload, maximumCiphertext);
+      if (salt.length !== SALT_BYTES || iv.length !== IV_BYTES || ciphertext.length <= GCM_TAG_BYTES || ciphertext.length > maximumCiphertext) throw invalidSenc();
+      return {
+        iterations,
+        salt,
+        iv,
+        ciphertext,
+        aad: makeAad(iterations, value.kdf.salt, value.cipher.iv)
+      };
+    }
+
+    function parseEnvelopeText(text) {
+      let value;
+      try { value = JSON.parse(text); } catch (_) { throw invalidSenc(); }
+      return validateEnvelope(value);
+    }
+
+    async function decryptValidatedEnvelope(validated, password) {
+      const key = await deriveAesKey(password, validated.salt, validated.iterations, 'decrypt');
+      let plaintext;
+      try {
+        plaintext = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: validated.iv, additionalData: validated.aad, tagLength: GCM_TAG_BITS },
+          key,
+          validated.ciphertext
+        );
+      } catch (_) {
+        throw new SencError(MESSAGE_AUTH_FAILED, 'authentication');
+      }
+      const unpacked = parseBinaryPayload(new Uint8Array(plaintext));
+      validateJsonBytes(unpacked.data, invalidSenc());
+      return unpacked;
+    }
+
+    function validateJsonBytes(bytes, errorToThrow = new SencError('Vybraný soubor neobsahuje platný JSON.')) {
+      try {
+        const text = fatalUtf8Decoder.decode(bytes);
+        JSON.parse(text);
+      } catch (_) {
+        throw errorToThrow;
+      }
+    }
+
+    function safeJsonFileName(originalName) {
+      if (typeof originalName !== 'string') return 'obnoveny-soubor.json';
+      const pieces = originalName.replace(/\\/g, '/').split('/');
+      let name = (pieces[pieces.length - 1] || '')
+        .replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069<>:"/\\|?*]/gi, '_')
+        .trim();
+      name = name.replace(/[. ]+$/g, '');
+      if (!name || name === '.' || name === '..') return 'obnoveny-soubor.json';
+      if (!/\.json$/i.test(name)) {
+        name = name.replace(/\.[^.]*$/, '');
+        if (!name) return 'obnoveny-soubor.json';
+        name += '.json';
+      }
+      const extension = name.slice(-5);
+      const stem = name.slice(0, -5).replace(/[. ]+$/g, '');
+      if (!stem) return 'obnoveny-soubor.json';
+      name = stem + extension;
+      if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])\.json$/i.test(name)) name = '_' + name;
+      const characters = [...name];
+      if (characters.length > 180) {
+        const extension = '.json';
+        name = characters.slice(0, 180 - extension.length).join('').replace(/[. ]+$/g, '') + extension;
+      }
+      return name || 'obnoveny-soubor.json';
+    }
+    // CORE_END
+
+    const screens = [...document.querySelectorAll('[data-screen]')];
+    const navigationButtons = [...document.querySelectorAll('[data-view]')];
+    const encryptForm = document.getElementById('encryptForm');
+    const encryptFile = document.getElementById('encryptFile');
+    const encryptFileInfo = document.getElementById('encryptFileInfo');
+    const encryptPassword = document.getElementById('encryptPassword');
+    const encryptPasswordAgain = document.getElementById('encryptPasswordAgain');
+    const showEncryptPasswords = document.getElementById('showEncryptPasswords');
+    const encryptButton = document.getElementById('encryptButton');
+    const encryptStatus = document.getElementById('encryptStatus');
+    const decryptForm = document.getElementById('decryptForm');
+    const decryptFile = document.getElementById('decryptFile');
+    const decryptFileInfo = document.getElementById('decryptFileInfo');
+    const decryptPassword = document.getElementById('decryptPassword');
+    const showDecryptPassword = document.getElementById('showDecryptPassword');
+    const decryptButton = document.getElementById('decryptButton');
+    const decryptStatus = document.getElementById('decryptStatus');
+
+    function showView(viewName) {
+      screens.forEach(screen => screen.classList.toggle('hidden', screen.dataset.screen !== viewName));
+      navigationButtons.forEach(control => {
+        if (control.dataset.view === viewName) control.setAttribute('aria-current', 'page');
+        else control.removeAttribute('aria-current');
+      });
+      const activeScreen = screens.find(screen => screen.dataset.screen === viewName);
+      const heading = activeScreen && activeScreen.querySelector('h1');
+      if (heading) {
+        requestAnimationFrame(() => {
+          heading.focus({ preventScroll: true });
+          window.scrollTo(0, 0);
+        });
+      }
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toLocaleString('cs-CZ', { maximumFractionDigits: 1 }) + ' kB';
+      return (bytes / (1024 * 1024)).toLocaleString('cs-CZ', { maximumFractionDigits: 1 }) + ' MB';
+    }
+
+    function updateFileInfo(input, target) {
+      const file = input.files && input.files[0];
+      target.textContent = file ? 'Vybraný soubor: ' + file.name + ', velikost ' + formatFileSize(file.size) + '.' : 'Není vybrán žádný soubor.';
+    }
+
+    function setStatus(target, message) {
+      target.textContent = '';
+      requestAnimationFrame(() => { target.textContent = message; });
+    }
+
+    function passwordIsStrong(password) {
+      const length = [...password].length;
+      return length >= 8 && length <= 64 && /\p{Ll}/u.test(password) && /\p{Lu}/u.test(password) && /\p{Nd}/u.test(password) && /[\p{P}\p{S}]/u.test(password);
+    }
+
+    function setPasswordVisibility(inputs, visible) {
+      inputs.forEach(input => { input.type = visible ? 'text' : 'password'; });
+    }
+
+    function downloadBlob(blob, fileName) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function encryptedFileName(originalName) {
+      const safeName = safeJsonFileName(originalName);
+      const baseName = safeName.replace(/\.json$/i, '') || 'zasifrovany-soubor';
+      return baseName + '.senc';
+    }
+
+    function readableError(error, fallback) {
+      if (error instanceof SencError) return error.message;
+      return fallback;
+    }
+
+    navigationButtons.forEach(control => control.addEventListener('click', () => showView(control.dataset.view)));
+
+    encryptFile.addEventListener('change', () => {
+      updateFileInfo(encryptFile, encryptFileInfo);
+      encryptStatus.textContent = '';
+    });
+
+    decryptFile.addEventListener('change', () => {
+      updateFileInfo(decryptFile, decryptFileInfo);
+      decryptStatus.textContent = '';
+    });
+
+    showEncryptPasswords.addEventListener('change', () => {
+      setPasswordVisibility([encryptPassword, encryptPasswordAgain], showEncryptPasswords.checked);
+    });
+
+    showDecryptPassword.addEventListener('change', () => {
+      setPasswordVisibility([decryptPassword], showDecryptPassword.checked);
+    });
+
+    encryptForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const file = encryptFile.files && encryptFile.files[0];
+      if (!file) {
+        setStatus(encryptStatus, 'Vyberte JSON soubor.');
+        encryptFile.focus();
+        return;
+      }
+      if (file.size > MAX_JSON_BYTES) {
+        setStatus(encryptStatus, 'Soubor je příliš velký. Maximální podporovaná velikost je 50 MB.');
+        encryptFile.focus();
+        return;
+      }
+      if (!/\.json$/i.test(file.name)) {
+        setStatus(encryptStatus, 'Vyberte soubor s příponou .json.');
+        encryptFile.focus();
+        return;
+      }
+      const password = encryptPassword.value;
+      if (!passwordIsStrong(password)) {
+        setStatus(encryptStatus, 'Heslo musí mít 8 až 64 znaků a obsahovat malé písmeno, velké písmeno, číslici a speciální znak.');
+        encryptPassword.focus();
+        return;
+      }
+      if (password !== encryptPasswordAgain.value) {
+        setStatus(encryptStatus, 'Zadaná hesla se neshodují.');
+        encryptPasswordAgain.focus();
+        return;
+      }
+
+      encryptButton.disabled = true;
+      encryptForm.setAttribute('aria-busy', 'true');
+      setStatus(encryptStatus, 'Soubor se šifruje…');
+      try {
+        const originalBytes = new Uint8Array(await file.arrayBuffer());
+        validateJsonBytes(originalBytes);
+        const envelope = await encryptBytes(originalBytes, file.name, password);
+        const output = JSON.stringify(envelope, null, 2);
+        downloadBlob(new Blob([output], { type: 'application/json;charset=utf-8' }), encryptedFileName(file.name));
+        encryptPassword.value = '';
+        encryptPasswordAgain.value = '';
+        showEncryptPasswords.checked = false;
+        setPasswordVisibility([encryptPassword, encryptPasswordAgain], false);
+        setStatus(encryptStatus, 'Soubor byl úspěšně zašifrován a připraven ke stažení. Původní soubor nebyl změněn.');
+      } catch (error) {
+        setStatus(encryptStatus, readableError(error, 'Soubor se nepodařilo zašifrovat.'));
+        if (error instanceof SencError) encryptFile.focus();
+      } finally {
+        encryptButton.disabled = false;
+        encryptForm.removeAttribute('aria-busy');
+      }
+    });
+
+    decryptForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const file = decryptFile.files && decryptFile.files[0];
+      if (!file) {
+        setStatus(decryptStatus, 'Vyberte soubor SENC.');
+        decryptFile.focus();
+        return;
+      }
+      if (file.size > MAX_SENC_BYTES) {
+        setStatus(decryptStatus, 'Soubor je příliš velký. Maximální podporovaná velikost souboru SENC je 70 MB.');
+        decryptFile.focus();
+        return;
+      }
+      if (!/\.senc$/i.test(file.name)) {
+        setStatus(decryptStatus, 'Vyberte soubor s příponou .senc.');
+        decryptFile.focus();
+        return;
+      }
+
+      decryptButton.disabled = true;
+      decryptForm.setAttribute('aria-busy', 'true');
+      setStatus(decryptStatus, 'Soubor se dešifruje…');
+      try {
+        const envelopeBytes = new Uint8Array(await file.arrayBuffer());
+        let envelopeText;
+        try { envelopeText = fatalUtf8Decoder.decode(envelopeBytes); } catch (_) { throw invalidSenc(); }
+        const validated = parseEnvelopeText(envelopeText);
+        const restored = await decryptValidatedEnvelope(validated, decryptPassword.value);
+        downloadBlob(new Blob([restored.data], { type: 'application/json' }), safeJsonFileName(restored.originalName));
+        decryptPassword.value = '';
+        showDecryptPassword.checked = false;
+        setPasswordVisibility([decryptPassword], false);
+        setStatus(decryptStatus, 'Soubor byl úspěšně dešifrován a připraven ke stažení.');
+      } catch (error) {
+        setStatus(decryptStatus, readableError(error, MESSAGE_INVALID_SENC));
+        if (error instanceof SencError && error.code === 'authentication') decryptPassword.focus();
+        else decryptFile.focus();
+      } finally {
+        decryptButton.disabled = false;
+        decryptForm.removeAttribute('aria-busy');
+      }
+    });
+
+    if (!globalThis.crypto || !crypto.subtle || typeof crypto.getRandomValues !== 'function') {
+      encryptButton.disabled = true;
+      decryptButton.disabled = true;
+      setStatus(encryptStatus, 'Tento prohlížeč nepodporuje Web Crypto API potřebné pro SENC.');
+    }
+
+    showEncryptPasswords.checked = false;
+    showDecryptPassword.checked = false;
+    setPasswordVisibility([encryptPassword, encryptPasswordAgain, decryptPassword], false);
+  })();
+  </script>
+</body>
+</html>
